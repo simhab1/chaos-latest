@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "ChaosTraderX - Exness Trading Automation",
+  "version": "1.0.0",
+  "description": "AI-powered trading automation for Exness using Al Brooks methodology",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "background",
+    "alarms",
+    "notifications",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.exness.com/*",
+    "https://my.exness.com/*",
+    "https://trade.exness.com/*",
+    "https://*.exness.global/*",
+    "https://my.exness.global/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.exness.com/*",
+        "https://*.exness.global/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ChaosTraderX Control Panel"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "injected.js",
+        "injected-advanced.js",
+        "albrooks-analysis.js",
+        "volume-analysis.js",
+        "sentiment-analysis.js",
+        "trading-engine.js",
+        "exness-scraper.js"
+      ],
+      "matches": [
+        "https://*.exness.com/*",
+        "https://*.exness.global/*"
+      ]
+    }
+  ]
+}

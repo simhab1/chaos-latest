@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChaosTraderX Control Panel</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>ChaosTraderX</h1>
+      <div class="status-indicator" id="statusIndicator">
+        <span class="status-dot"></span>
+        <span class="status-text">Stopped</span>
+      </div>
+    </header>
+
+    <section class="controls">
+      <div class="control-group">
+        <label for="symbolSelect">Symbol:</label>
+        <select id="symbolSelect">
+          <option value="BTCUSD">BTCUSD</option>
+          <option value="XAUUSD">XAUUSD</option>
+          <option value="EURUSD">EURUSD</option>
+          <option value="GBPUSD">GBPUSD</option>
+          <option value="USDJPY">USDJPY</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label for="timeframeSelect">Timeframe:</label>
+        <select id="timeframeSelect">
+          <option value="M1">M1</option>
+          <option value="M5">M5</option>
+          <option value="M15" selected>M15</option>
+          <option value="M30">M30</option>
+          <option value="H1">H1</option>
+          <option value="H4">H4</option>
+          <option value="D1">D1</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label>
+          <input type="checkbox" id="autoTradingToggle">
+          Auto Trading
+        </label>
+      </div>
+
+      <div class="control-group">
+        <label for="confidenceThreshold">Confidence Threshold:</label>
+        <input type="range" id="confidenceThreshold" min="85" max="99" value="98" step="1">
+        <span id="confidenceValue">98%</span>
+      </div>
+
+      <div class="control-group">
+        <label for="maxLotSize">Max Lot Size:</label>
+        <input type="number" id="maxLotSize" min="0.01" max="1.0" step="0.01" value="0.01">
+      </div>
+
+      <div class="control-group">
+        <label>
+          <input type="checkbox" id="sentimentFilter" checked>
+          Sentiment Filter
+        </label>
+      </div>
+
+      <div class="control-group">
+        <label>
+          <input type="checkbox" id="volumeValidation" checked>
+          Volume Validation
+        </label>
+      </div>
+    </section>
+
+    <section class="actions">
+      <button id="startButton" class="btn btn-primary">Start Trading</button>
+      <button id="stopButton" class="btn btn-secondary" disabled>Stop Trading</button>
+      <button id="emergencyButton" class="btn btn-danger">Emergency Stop</button>
+    </section>
+
+    <section class="analysis">
+      <h2>Current Analysis</h2>
+      <div class="analysis-grid">
+        <div class="analysis-item">
+          <label>Market Structure:</label>
+          <span id="marketStructure">-</span>
+        </div>
+        <div class="analysis-item">
+          <label>Pattern:</label>
+          <span id="pattern">-</span>
+        </div>
+        <div class="analysis-item">
+          <label>Signal:</label>
+          <span id="signal">-</span>
+        </div>
+        <div class="analysis-item">
+          <label>Confidence:</label>
+          <span id="confidence">-</span>
+        </div>
+        <div class="analysis-item">
+          <label>Always-In:</label>
+          <span id="alwaysIn">-</span>
+        </div>
+        <div class="analysis-item">
+          <label>Sentiment:</label>
+          <span id="sentiment">-</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="account">
+      <h2>Account Information</h2>
+      <div class="account-grid">
+        <div class="account-item">
+          <label>Balance:</label>
+          <span id="balance">$0.00</span>
+        </div>
+        <div class="account-item">
+          <label>Equity:</label>
+          <span id="equity">$0.00</span>
+        </div>
+        <div class="account-item">
+          <label>Margin:</label>
+          <span id="margin">$0.00</span>
+        </div>
+        <div class="account-item">
+          <label>Open P&L:</label>
+          <span id="openPnl" class="pnl">$0.00</span>
+        </div>
+        <div class="account-item">
+          <label>Today's P&L:</label>
+          <span id="todayPnl" class="pnl">$0.00</span>
+        </div>
+        <div class="account-item">
+          <label>Total P&L:</label>
+          <span id="totalPnl" class="pnl">$0.00</span>
+        </div>
+        <div class="account-item">
+          <label>Open Positions:</label>
+          <span id="openPositions">0</span>
+        </div>
+        <div class="account-item">
+          <label>Total Trades:</label>
+          <span id="totalTrades">0</span>
+        </div>
+        <div class="account-item">
+          <label>Win Rate:</label>
+          <span id="winRate">0%</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="trades">
+      <h2>Recent Trades</h2>
+      <div class="trades-container" id="tradesContainer">
+        <div class="no-trades">No trades yet</div>
+      </div>
+    </section>
+
+    <section class="logs">
+      <h2>Execution Log</h2>
+      <div class="logs-container" id="logsContainer">
+        <div class="log-item info">Extension loaded and ready</div>
+      </div>
+    </section>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
