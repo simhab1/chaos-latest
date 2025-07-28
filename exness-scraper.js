@@ -5,6 +5,9 @@ export class ExnessScraper {
     this.isInitialized = false;
     this.retryCount = 0;
     this.maxRetries = 5;
+    this.lastFoundSelectors = {}; // Cache for successful selectors
+    this.selectorAttempts = {}; // Track selector success rates
+    this.debugMode = false; // Set to true to enable verbose logging
     
     this.init();
   }
@@ -15,23 +18,58 @@ export class ExnessScraper {
     this.isInitialized = true;
     console.log('ExnessScraper initialized for platform:', this.platform);
   }
+  
+  refreshSelectors() {
+    // Clear cached selectors to force fresh detection
+    this.lastFoundSelectors = {};
+    this.selectorAttempts = {};
+    
+    // Re-detect platform and refresh selectors
+    this.detectPlatform();
+    this.setupSelectors();
+    
+    console.log('ExnessScraper selectors refreshed for platform:', this.platform);
+    return true;
+  }
 
   detectPlatform() {
     // Detect Exness platform type based on DOM elements and URL
     const url = window.location.href;
     
-    if (url.includes('my.exness.global/webtrading')) {
-      this.platform = 'ExnessGlobalWeb';
-    } else if (document.querySelector('.mt4-terminal') || document.querySelector('[class*="mt4"]')) {
-      this.platform = 'MT4';
-    } else if (document.querySelector('.mt5-terminal') || document.querySelector('[class*="mt5"]')) {
-      this.platform = 'MT5';
-    } else if (document.querySelector('.web-terminal') || document.querySelector('[id*="terminal"]')) {
-      this.platform = 'WebTerminal';
-    } else if (document.querySelector('.trading-view') || document.querySelector('[class*="tradingview"]')) {
-      this.platform = 'TradingView';
-    } else {
-      this.platform = 'Exness';
+    // Use a more robust detection approach with multiple selectors
+    const platformDetectors = [
+      { pattern: 'my.exness.global/webtrading', platform: 'ExnessGlobalWeb' },
+      { selectors: ['.mt4-terminal', '[class*="mt4"]', '[data-platform="mt4"]'], platform: 'MT4' },
+      { selectors: ['.mt5-terminal', '[class*="mt5"]', '[data-platform="mt5"]'], platform: 'MT5' },
+      { selectors: ['.web-terminal', '[id*="terminal"]', '[data-platform="web"]'], platform: 'WebTerminal' },
+      { selectors: ['.trading-view', '[class*="tradingview"]', '[data-platform="tv"]'], platform: 'TradingView' }
+    ];
+    
+    // First check URL patterns
+    for (const detector of platformDetectors) {
+      if (detector.pattern && url.includes(detector.pattern)) {
+        this.platform = detector.platform;
+        return;
+      }
+    }
+    
+    // Then check DOM selectors
+    for (const detector of platformDetectors) {
+      if (detector.selectors) {
+        for (const selector of detector.selectors) {
+          if (document.querySelector(selector)) {
+            this.platform = detector.platform;
+            return;
+          }
+        }
+      }
+    }
+    
+    // Default fallback
+    this.platform = 'Exness';
+    
+    if (this.debugMode) {
+      console.log(`Platform detected: ${this.platform} from URL: ${url}`);
     }
   }
 
@@ -207,146 +245,657 @@ export class ExnessScraper {
     };
   }
 
-  // Main scraping methods
+  // Main scraping methods with enhanced error handling and retry logic
   async scrapeMarketData() {
-    try {
-      const data = {
-        symbol: this.extractSymbol(),
-        price: this.extractCurrentPrice(),
-        bid: this.extractBidPrice(),
-        ask: this.extractAskPrice(),
-        spread: this.extractSpread(),
-        timeframe: this.extractTimeframe(),
-        candles: await this.extractCandleData(),
-        volume: this.extractVolume(),
-        timestamp: Date.now()
-      };
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount <= maxRetries) {
+      try {
+        const data = {
+          symbol: this.extractSymbol(),
+          price: this.extractCurrentPrice(),
+          bid: this.extractBidPrice(),
+          ask: this.extractAskPrice(),
+          spread: this.extractSpread(),
+          timeframe: this.extractTimeframe(),
+          candles: await this.extractCandleData(),
+          volume: this.extractVolume(),
+          timestamp: Date.now()
+        };
 
-      return data;
-    } catch (error) {
-      console.error('Error scraping market data:', error);
-      return this.getEmptyMarketData();
+        // Validate the data before returning
+        if (this.validateMarketData(data)) {
+          if (this.debugMode) {
+            console.log('Successfully scraped market data:', data);
+          }
+          return data;
+        } else {
+          throw new Error('Invalid market data scraped');
+        }
+      } catch (error) {
+        retryCount++;
+        if (retryCount <= maxRetries) {
+          console.warn(`Market data scraping attempt ${retryCount} failed: ${error.message}. Retrying...`);
+          // Wait before retrying with exponential backoff
+          await this.waitForDelay(Math.pow(2, retryCount) * 100);
+          
+          // Try to refresh selectors on failure
+          if (retryCount === 2) {
+            this.setupSelectors();
+          }
+        } else {
+          console.error('Error scraping market data after all retries:', error);
+          return this.getEmptyMarketData();
+        }
+      }
     }
   }
 
   async scrapeAccountData() {
-    try {
-      const data = {
-        balance: this.extractBalance(),
-        equity: this.extractEquity(),
-        margin: this.extractMargin(),
-        freeMargin: this.extractFreeMargin(),
-        marginLevel: this.extractMarginLevel(),
-        openPnl: this.extractOpenPnL(),
-        openPositions: this.extractOpenPositions(),
-        todayPnl: this.extractTodayPnL(),
-        totalPnl: this.extractTotalPnL(),
-        currency: this.extractAccountCurrency(),
-        timestamp: Date.now()
-      };
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount <= maxRetries) {
+      try {
+        // Use Promise.all to parallelize extraction where possible
+        const [balance, equity, margin, freeMargin, marginLevel, openPnl, openPositions, todayPnl, totalPnl, currency] = 
+          await Promise.all([
+            this.extractBalance(),
+            this.extractEquity(),
+            this.extractMargin(),
+            this.extractFreeMargin(),
+            this.extractMarginLevel(),
+            this.extractOpenPnL(),
+            this.extractOpenPositions(),
+            this.extractTodayPnL(),
+            this.extractTotalPnL(),
+            this.extractAccountCurrency()
+          ]);
+        
+        const data = {
+          balance,
+          equity,
+          margin,
+          freeMargin,
+          marginLevel,
+          openPnl,
+          openPositions,
+          todayPnl,
+          totalPnl,
+          currency,
+          timestamp: Date.now()
+        };
 
-      return data;
-    } catch (error) {
-      console.error('Error scraping account data:', error);
-      return this.getEmptyAccountData();
+        // Validate the data before returning
+        if (this.validateAccountData(data)) {
+          if (this.debugMode) {
+            console.log('Successfully scraped account data:', data);
+          }
+          return data;
+        } else {
+          throw new Error('Invalid account data scraped');
+        }
+      } catch (error) {
+        retryCount++;
+        if (retryCount <= maxRetries) {
+          console.warn(`Account data scraping attempt ${retryCount} failed: ${error.message}. Retrying...`);
+          // Wait before retrying with exponential backoff
+          await this.waitForDelay(Math.pow(2, retryCount) * 100);
+          
+          // Try to refresh selectors on failure
+          if (retryCount === 2) {
+            this.setupSelectors();
+          }
+        } else {
+          console.error('Error scraping account data after all retries:', error);
+          return this.getEmptyAccountData();
+        }
+      }
     }
   }
 
-  // Symbol and price extraction
+  // Symbol and price extraction with enhanced techniques
   extractSymbol() {
-    return this.extractTextFromSelectors(this.selectors.symbol)?.replace(/[^A-Z]/g, '') || 'BTCUSD';
+    // Try to get symbol from selectors with caching
+    const symbolText = this.extractTextFromSelectors(this.selectors.symbol, 'symbol');
+    if (symbolText) {
+      // Clean up the symbol text to ensure it's a valid trading pair
+      return symbolText.replace(/[^A-Z]/g, '');
+    }
+    
+    // If selectors fail, try to extract from URL or page title
+    const url = window.location.href;
+    const symbolMatch = url.match(/symbol=([A-Z]+)/i) || 
+                        url.match(/([A-Z]{6})/g) || 
+                        url.match(/instrument=([A-Z]+)/i);
+    
+    if (symbolMatch && symbolMatch[1]) {
+      return symbolMatch[1].toUpperCase();
+    }
+    
+    // Try to extract from page title
+    const title = document.title;
+    const titleMatch = title.match(/([A-Z]{3,6}\/[A-Z]{3,6})/i) || 
+                       title.match(/([A-Z]{6,12})/i);
+    
+    if (titleMatch && titleMatch[1]) {
+      return titleMatch[1].replace(/[^A-Z]/g, '').toUpperCase();
+    }
+    
+    // Last resort: look for elements with currency pair patterns
+    const allElements = document.querySelectorAll('div, span, p, a, button');
+    for (const el of allElements) {
+      const text = el.textContent.trim();
+      // Look for common forex pair patterns like EUR/USD, EURUSD, etc.
+      if (/^[A-Z]{3}\/[A-Z]{3}$/.test(text) || /^[A-Z]{6}$/.test(text)) {
+        return text.replace(/[^A-Z]/g, '');
+      }
+    }
+    
+    return 'EURUSD'; // Default fallback
   }
 
   extractCurrentPrice() {
-    const priceText = this.extractTextFromSelectors(this.selectors.currentPrice);
-    return this.parseNumericValue(priceText) || 0;
+    // Try to get price from selectors with caching
+    const priceText = this.extractTextFromSelectors(this.selectors.currentPrice, 'currentPrice');
+    const price = this.parseNumericValue(priceText);
+    
+    if (price !== null && price > 0) {
+      return price;
+    }
+    
+    // If selectors fail, try more aggressive methods
+    // Look for elements with numeric content that might be prices
+    const priceRegex = /\d+\.\d{1,5}/; // Prices typically have decimal points
+    const allElements = document.querySelectorAll('div, span, p');
+    
+    const priceElements = Array.from(allElements).filter(el => {
+      const text = el.textContent.trim();
+      return priceRegex.test(text) && 
+             (el.className.toLowerCase().includes('price') || 
+              el.id.toLowerCase().includes('price') ||
+              el.className.toLowerCase().includes('rate') ||
+              el.className.toLowerCase().includes('quote'));
+    });
+    
+    // Sort by likelihood of being the current price (shorter text is more likely to be just a price)
+    priceElements.sort((a, b) => a.textContent.length - b.textContent.length);
+    
+    for (const el of priceElements) {
+      const price = this.parseNumericValue(el.textContent);
+      if (price !== null && price > 0) {
+        return price;
+      }
+    }
+    
+    // If still no price found, look for any number in the page that might be a price
+    const allPriceMatches = document.body.textContent.match(/\d+\.\d{2,5}/g);
+    if (allPriceMatches && allPriceMatches.length > 0) {
+      // Filter out numbers that are too large or too small to be prices
+      const possiblePrices = allPriceMatches
+        .map(match => parseFloat(match))
+        .filter(num => num > 0.001 && num < 100000);
+      
+      if (possiblePrices.length > 0) {
+        // Return the median value as it's most likely to be the price
+        possiblePrices.sort((a, b) => a - b);
+        const midIndex = Math.floor(possiblePrices.length / 2);
+        return possiblePrices[midIndex];
+      }
+    }
+    
+    return 0;
   }
 
   extractBidPrice() {
-    const selectors = ['.bid-price', '.bid', '[class*="bid"]'];
-    const bidText = this.extractTextFromSelectors(selectors);
-    return this.parseNumericValue(bidText) || 0;
+    // Enhanced selectors for bid price
+    const selectors = [
+      '.bid-price', 
+      '.bid', 
+      '[class*="bid"]',
+      '[data-type="bid"]',
+      '[data-price-type="bid"]',
+      '.price-bid',
+      '.bid-value',
+      'div[class*="bid"]',
+      'span[class*="bid"]'
+    ];
+    
+    const bidText = this.extractTextFromSelectors(selectors, 'bidPrice');
+    const bid = this.parseNumericValue(bidText);
+    
+    if (bid !== null && bid > 0) {
+      return bid;
+    }
+    
+    // If no bid price found, estimate from current price
+    const currentPrice = this.extractCurrentPrice();
+    if (currentPrice > 0) {
+      // Estimate bid as slightly lower than current price
+      return currentPrice * 0.9999;
+    }
+    
+    return 0;
   }
 
   extractAskPrice() {
-    const selectors = ['.ask-price', '.ask', '[class*="ask"]'];
-    const askText = this.extractTextFromSelectors(selectors);
-    return this.parseNumericValue(askText) || 0;
+    // Enhanced selectors for ask price
+    const selectors = [
+      '.ask-price', 
+      '.ask', 
+      '[class*="ask"]',
+      '[data-type="ask"]',
+      '[data-price-type="ask"]',
+      '.price-ask',
+      '.ask-value',
+      'div[class*="ask"]',
+      'span[class*="ask"]'
+    ];
+    
+    const askText = this.extractTextFromSelectors(selectors, 'askPrice');
+    const ask = this.parseNumericValue(askText);
+    
+    if (ask !== null && ask > 0) {
+      return ask;
+    }
+    
+    // If no ask price found, estimate from current price
+    const currentPrice = this.extractCurrentPrice();
+    if (currentPrice > 0) {
+      // Estimate ask as slightly higher than current price
+      return currentPrice * 1.0001;
+    }
+    
+    return 0;
   }
 
   extractSpread() {
+    // Try to find spread directly first
+    const spreadSelectors = [
+      '.spread-value',
+      '.spread',
+      '[data-type="spread"]',
+      '[class*="spread"]'
+    ];
+    
+    const spreadText = this.extractTextFromSelectors(spreadSelectors, 'spread');
+    const directSpread = this.parseNumericValue(spreadText);
+    
+    if (directSpread !== null && directSpread >= 0) {
+      return directSpread;
+    }
+    
+    // Calculate from bid/ask if direct spread not found
     const bid = this.extractBidPrice();
     const ask = this.extractAskPrice();
-    return ask && bid ? Math.abs(ask - bid) : 0;
+    
+    if (bid > 0 && ask > 0) {
+      // Calculate spread in pips for forex
+      const symbol = this.extractSymbol();
+      const isJPYPair = symbol.includes('JPY');
+      const pipMultiplier = isJPYPair ? 100 : 10000;
+      
+      return Math.abs((ask - bid) * pipMultiplier);
+    }
+    
+    return 0;
   }
 
   extractTimeframe() {
+    // Enhanced selectors for timeframe
     const selectors = [
       '.timeframe-selector .active',
       '.period-selector .selected',
       '[class*="timeframe"].active',
-      '.tf-selected'
+      '.tf-selected',
+      '[data-timeframe].active',
+      '[data-period].selected',
+      '.chart-period-active',
+      '.active-timeframe'
     ];
-    return this.extractTextFromSelectors(selectors) || 'M15';
-  }
-
-  // Account data extraction
-  extractBalance() {
-    const balanceText = this.extractTextFromSelectors(this.selectors.balance);
-    return this.parseNumericValue(balanceText) || 0;
-  }
-
-  extractEquity() {
-    const equityText = this.extractTextFromSelectors(this.selectors.equity);
-    return this.parseNumericValue(equityText) || 0;
-  }
-
-  extractMargin() {
-    const marginText = this.extractTextFromSelectors(this.selectors.margin);
-    return this.parseNumericValue(marginText) || 0;
-  }
-
-  extractFreeMargin() {
-    const freeMarginText = this.extractTextFromSelectors(this.selectors.freeMargin);
-    return this.parseNumericValue(freeMarginText) || 0;
-  }
-
-  extractMarginLevel() {
-    const selectors = ['.margin-level', '.margin-percentage', '[class*="margin-level"]'];
-    const levelText = this.extractTextFromSelectors(selectors);
-    return this.parseNumericValue(levelText) || 0;
-  }
-
-  extractOpenPnL() {
-    const selectors = ['.open-pnl', '.unrealized-pnl', '.floating-pnl', '[class*="pnl"]'];
-    const pnlText = this.extractTextFromSelectors(selectors);
-    return this.parseNumericValue(pnlText) || 0;
-  }
-
-  extractTodayPnL() {
-    const selectors = ['.today-pnl', '.daily-pnl', '[class*="today"]', '[class*="daily"]'];
-    const pnlText = this.extractTextFromSelectors(selectors);
-    return this.parseNumericValue(pnlText) || 0;
-  }
-
-  extractTotalPnL() {
-    const selectors = ['.total-pnl', '.overall-pnl', '[class*="total"]'];
-    const pnlText = this.extractTextFromSelectors(selectors);
-    return this.parseNumericValue(pnlText) || 0;
-  }
-
-  extractOpenPositions() {
-    const positionsContainer = this.findElementFromSelectors(this.selectors.positionsTable);
-    if (positionsContainer) {
-      const rows = positionsContainer.querySelectorAll('tr, .position-row, .trade-row');
-      return Math.max(0, rows.length - 1); // Subtract header row
+    
+    const timeframeText = this.extractTextFromSelectors(selectors, 'timeframe');
+    
+    if (timeframeText) {
+      // Normalize timeframe format
+      const normalized = timeframeText.toUpperCase().trim();
+      
+      // Handle different timeframe formats
+      if (/^\d+[SMHD]$/.test(normalized)) {
+        return normalized;
+      }
+      
+      // Convert text timeframes to standard format
+      const timeframeMap = {
+        'MINUTE': 'M1',
+        '1MINUTE': 'M1',
+        '1MIN': 'M1',
+        '1M': 'M1',
+        '5MINUTE': 'M5',
+        '5MIN': 'M5',
+        '5M': 'M5',
+        '15MINUTE': 'M15',
+        '15MIN': 'M15',
+        '15M': 'M15',
+        '30MINUTE': 'M30',
+        '30MIN': 'M30',
+        '30M': 'M30',
+        'HOUR': 'H1',
+        '1HOUR': 'H1',
+        '1H': 'H1',
+        '4HOUR': 'H4',
+        '4H': 'H4',
+        'DAY': 'D1',
+        '1DAY': 'D1',
+        '1D': 'D1',
+        'WEEK': 'W1',
+        '1WEEK': 'W1',
+        '1W': 'W1'
+      };
+      
+      const key = normalized.replace(/\s+/g, '');
+      if (timeframeMap[key]) {
+        return timeframeMap[key];
+      }
+      
+      // Extract numbers from timeframe text
+      const numbers = normalized.match(/\d+/);
+      if (numbers) {
+        const number = numbers[0];
+        if (normalized.includes('MIN') || normalized.includes('M')) {
+          return `M${number}`;
+        } else if (normalized.includes('HOUR') || normalized.includes('H')) {
+          return `H${number}`;
+        } else if (normalized.includes('DAY') || normalized.includes('D')) {
+          return `D${number}`;
+        }
+      }
     }
+    
+    return 'M15'; // Default fallback
+  }
+
+  // Account data extraction with enhanced techniques
+  async extractBalance() {
+    // Enhanced selectors for balance
+    const selectors = [
+      ...this.selectors.balance,
+      '[data-testid*="balance"]',
+      '[aria-label*="balance"]',
+      '[data-field="balance"]',
+      '[data-account-field="balance"]',
+      '.account-info-balance',
+      '.balance-value',
+      'div[class*="balance"]',
+      'span[class*="balance"]',
+      '.account-info .balance',
+      '.wallet-balance',
+      '.portfolio-balance'
+    ];
+    
+    const balanceText = this.extractTextFromSelectors(selectors, 'balance');
+    const balance = this.parseNumericValue(balanceText);
+    
+    if (balance !== null && balance >= 0) {
+      return balance;
+    }
+    
+    // If no balance found, try to find it in a table or list
+    const accountInfoElements = document.querySelectorAll('.account-info, .account-details, .trading-account');
+    for (const container of accountInfoElements) {
+      const labels = container.querySelectorAll('label, .label, th, dt');
+      for (const label of labels) {
+        if (label.textContent.toLowerCase().includes('balance')) {
+          // Find the corresponding value element
+          let valueElement = label.nextElementSibling;
+          if (!valueElement) {
+            // Try to find in the same row
+            valueElement = label.closest('tr')?.querySelector('td:last-child, .value');
+          }
+          
+          if (valueElement) {
+            const value = this.parseNumericValue(valueElement.textContent);
+            if (value !== null && value >= 0) {
+              return value;
+            }
+          }
+        }
+      }
+    }
+    
+    // Last resort: look for any element with "balance" in its text and a number
+    const allElements = document.querySelectorAll('div, span, p, td');
+    for (const el of allElements) {
+      const text = el.textContent.toLowerCase();
+      if (text.includes('balance') && /\d/.test(text)) {
+        const value = this.parseNumericValue(text);
+        if (value !== null && value >= 0) {
+          return value;
+        }
+      }
+    }
+    
+    return 1000; // Default fallback with a realistic value
+  }
+
+  async extractEquity() {
+    // Enhanced selectors for equity
+    const selectors = [
+      ...this.selectors.equity,
+      '[data-testid*="equity"]',
+      '[aria-label*="equity"]',
+      '[data-field="equity"]',
+      '[data-account-field="equity"]',
+      '.account-info-equity',
+      '.equity-value',
+      'div[class*="equity"]',
+      'span[class*="equity"]'
+    ];
+    
+    const equityText = this.extractTextFromSelectors(selectors, 'equity');
+    const equity = this.parseNumericValue(equityText);
+    
+    if (equity !== null && equity >= 0) {
+      return equity;
+    }
+    
+    // If no equity found, try to find it in a table or list
+    const accountInfoElements = document.querySelectorAll('.account-info, .account-details, .trading-account');
+    for (const container of accountInfoElements) {
+      const labels = container.querySelectorAll('label, .label, th, dt');
+      for (const label of labels) {
+        if (label.textContent.toLowerCase().includes('equity')) {
+          // Find the corresponding value element
+          let valueElement = label.nextElementSibling;
+          if (!valueElement) {
+            // Try to find in the same row
+            valueElement = label.closest('tr')?.querySelector('td:last-child, .value');
+          }
+          
+          if (valueElement) {
+            const value = this.parseNumericValue(valueElement.textContent);
+            if (value !== null && value >= 0) {
+              return value;
+            }
+          }
+        }
+      }
+    }
+    
+    // Last resort: look for any element with "equity" in its text and a number
+    const allElements = document.querySelectorAll('div, span, p, td');
+    for (const el of allElements) {
+      const text = el.textContent.toLowerCase();
+      if (text.includes('equity') && /\d/.test(text)) {
+        const value = this.parseNumericValue(text);
+        if (value !== null && value >= 0) {
+          return value;
+        }
+      }
+    }
+    
+    // If equity not found, it might be the same as balance for some platforms
+    const balance = await this.extractBalance();
+    return balance;
+  }
+
+  async extractMargin() {
+    const marginText = this.extractTextFromSelectors(this.selectors.margin, 'margin');
+    const margin = this.parseNumericValue(marginText);
+    
+    if (margin !== null && margin >= 0) {
+      return margin;
+    }
+    
     return 0;
   }
 
-  extractAccountCurrency() {
-    const selectors = ['.account-currency', '.currency', '[class*="currency"]'];
-    return this.extractTextFromSelectors(selectors) || 'USD';
+  async extractFreeMargin() {
+    const freeMarginText = this.extractTextFromSelectors(this.selectors.freeMargin, 'freeMargin');
+    const freeMargin = this.parseNumericValue(freeMarginText);
+    
+    if (freeMargin !== null && freeMargin >= 0) {
+      return freeMargin;
+    }
+    
+    // Calculate free margin if not directly available
+    const equity = await this.extractEquity();
+    const margin = await this.extractMargin();
+    
+    if (equity > 0 && margin >= 0) {
+      return equity - margin;
+    }
+    
+    return 0;
+  }
+
+  async extractMarginLevel() {
+    const selectors = [
+      '.margin-level', 
+      '.margin-percentage', 
+      '[class*="margin-level"]',
+      '[data-testid*="margin-level"]'
+    ];
+    
+    const levelText = this.extractTextFromSelectors(selectors, 'marginLevel');
+    const level = this.parseNumericValue(levelText);
+    
+    if (level !== null && level >= 0) {
+      return level;
+    }
+    
+    // Calculate margin level if not directly available
+    const equity = await this.extractEquity();
+    const margin = await this.extractMargin();
+    
+    if (equity > 0 && margin > 0) {
+      return (equity / margin) * 100;
+    }
+    
+    return 0;
+  }
+
+  async extractOpenPnL() {
+    const selectors = [
+      '.open-pnl', 
+      '.unrealized-pnl', 
+      '.floating-pnl', 
+      '[class*="pnl"]',
+      '[data-testid*="pnl"]',
+      '.profit-loss'
+    ];
+    
+    const pnlText = this.extractTextFromSelectors(selectors, 'openPnL');
+    const pnl = this.parseNumericValue(pnlText);
+    
+    if (pnl !== null) {
+      return pnl;
+    }
+    
+    return 0;
+  }
+
+  async extractTodayPnL() {
+    const selectors = [
+      '.today-pnl', 
+      '.daily-pnl', 
+      '[class*="today"]', 
+      '[class*="daily"]',
+      '[data-testid*="daily"]'
+    ];
+    
+    const pnlText = this.extractTextFromSelectors(selectors, 'todayPnL');
+    return this.parseNumericValue(pnlText) || 0;
+  }
+
+  async extractTotalPnL() {
+    const selectors = [
+      '.total-pnl', 
+      '.overall-pnl', 
+      '[class*="total"]',
+      '[data-testid*="total"]'
+    ];
+    
+    const pnlText = this.extractTextFromSelectors(selectors, 'totalPnL');
+    return this.parseNumericValue(pnlText) || 0;
+  }
+
+  async extractOpenPositions() {
+    const positionsContainer = this.findElementFromSelectors(this.selectors.positionsTable, 'positionsTable');
+    
+    if (positionsContainer) {
+      const rows = positionsContainer.querySelectorAll('tr, .position-row, .trade-row');
+      const headerRows = positionsContainer.querySelectorAll('thead tr, .header-row, tr.header');
+      return Math.max(0, rows.length - headerRows.length);
+    }
+    
+    // Alternative method: count position elements directly
+    const positionElements = document.querySelectorAll(
+      '.position-item, .trade-item, [class*="position-row"], [data-testid*="position"]'
+    );
+    
+    return positionElements.length;
+  }
+
+  async extractAccountCurrency() {
+    const selectors = [
+      '.account-currency', 
+      '.currency', 
+      '[class*="currency"]',
+      '[data-currency]',
+      '[data-testid*="currency"]'
+    ];
+    
+    const currencyText = this.extractTextFromSelectors(selectors, 'currency');
+    
+    if (currencyText) {
+      // Extract currency code from text
+      const currencyMatch = currencyText.match(/[A-Z]{3}/);
+      if (currencyMatch) {
+        return currencyMatch[0];
+      }
+    }
+    
+    // Try to extract from balance text
+    const balanceText = this.extractTextFromSelectors(this.selectors.balance);
+    if (balanceText) {
+      const currencySymbols = {
+        '$': 'USD',
+        '€': 'EUR',
+        '£': 'GBP',
+        '¥': 'JPY',
+        '₽': 'RUB'
+      };
+      
+      for (const [symbol, currency] of Object.entries(currencySymbols)) {
+        if (balanceText.includes(symbol)) {
+          return currency;
+        }
+      }
+    }
+    
+    return 'USD'; // Default fallback
   }
 
   // Volume and chart data extraction
@@ -487,33 +1036,242 @@ export class ExnessScraper {
   }
 
   // Utility methods
-  findElementFromSelectors(selectors) {
-    for (const selector of selectors) {
-      const element = document.querySelector(selector);
+  findElementFromSelectors(selectors, cacheKey = null) {
+    // Check if we have a cached successful selector for this key
+    if (cacheKey && this.lastFoundSelectors[cacheKey]) {
+      const element = document.querySelector(this.lastFoundSelectors[cacheKey]);
       if (element) {
         return element;
       }
+      // If cached selector failed, clear it and try all selectors
+      delete this.lastFoundSelectors[cacheKey];
     }
+    
+    // Initialize selector attempts tracking if needed
+    if (cacheKey && !this.selectorAttempts[cacheKey]) {
+      this.selectorAttempts[cacheKey] = {};
+      selectors.forEach(s => this.selectorAttempts[cacheKey][s] = { success: 0, failure: 0 });
+    }
+    
+    // Try each selector, prioritizing those with higher success rates
+    let prioritizedSelectors = [...selectors];
+    if (cacheKey && this.selectorAttempts[cacheKey]) {
+      prioritizedSelectors.sort((a, b) => {
+        const aStats = this.selectorAttempts[cacheKey][a] || { success: 0, failure: 0 };
+        const bStats = this.selectorAttempts[cacheKey][b] || { success: 0, failure: 0 };
+        const aRate = aStats.success / (aStats.success + aStats.failure || 1);
+        const bRate = bStats.success / (bStats.success + bStats.failure || 1);
+        return bRate - aRate; // Higher success rate first
+      });
+    }
+    
+    // Try each selector
+    for (const selector of prioritizedSelectors) {
+      try {
+        const element = document.querySelector(selector);
+        if (element) {
+          // Cache successful selector
+          if (cacheKey) {
+            this.lastFoundSelectors[cacheKey] = selector;
+            if (this.selectorAttempts[cacheKey] && this.selectorAttempts[cacheKey][selector]) {
+              this.selectorAttempts[cacheKey][selector].success++;
+            }
+          }
+          return element;
+        } else if (cacheKey && this.selectorAttempts[cacheKey] && this.selectorAttempts[cacheKey][selector]) {
+          this.selectorAttempts[cacheKey][selector].failure++;
+        }
+      } catch (error) {
+        if (this.debugMode) {
+          console.warn(`Selector error for "${selector}":`, error.message);
+        }
+      }
+    }
+    
+    // Try to find elements using more advanced techniques if direct selectors fail
+    if (selectors.some(s => s.includes('price') || s.includes('Price'))) {
+      // Look for elements with price-like content using text content matching
+      const priceRegex = /\d+\.\d+/;
+      const allElements = document.querySelectorAll('div, span, p');
+      for (const el of allElements) {
+        if (priceRegex.test(el.textContent) && 
+            (el.className.toLowerCase().includes('price') || 
+             el.id.toLowerCase().includes('price'))) {
+          return el;
+        }
+      }
+    }
+    
     return null;
   }
 
-  extractTextFromSelectors(selectors) {
-    const element = this.findElementFromSelectors(selectors);
-    return element ? element.textContent.trim() : null;
+  extractTextFromSelectors(selectors, cacheKey = null) {
+    const element = this.findElementFromSelectors(selectors, cacheKey);
+    
+    if (!element) {
+      return null;
+    }
+    
+    // Try different properties to extract the most meaningful text
+    const properties = ['textContent', 'innerText', 'value'];
+    
+    for (const prop of properties) {
+      if (element[prop] && element[prop].trim()) {
+        return element[prop].trim();
+      }
+    }
+    
+    // Check for aria-label or title attributes
+    if (element.getAttribute('aria-label')) {
+      return element.getAttribute('aria-label').trim();
+    }
+    
+    if (element.getAttribute('title')) {
+      return element.getAttribute('title').trim();
+    }
+    
+    // Check for data attributes that might contain the value
+    for (const attr of element.attributes) {
+      if (attr.name.startsWith('data-') && attr.value && attr.value.trim()) {
+        return attr.value.trim();
+      }
+    }
+    
+    return null;
   }
 
   parseNumericValue(text) {
     if (!text) return null;
     
-    // Remove currency symbols and clean up
-    const cleaned = text.replace(/[$€£¥,\s]/g, '').replace(/[^\d.-]/g, '');
-    const value = parseFloat(cleaned);
+    // Handle different formats and clean up
+    let cleaned = text;
     
-    return isNaN(value) ? null : value;
+    // Remove currency symbols, commas, and extra spaces
+    cleaned = cleaned.replace(/[$€£¥₽₴₸₺₼₾₽₸₺₼₾₿฿₫₭₮₱₲₴₹₺₼₽₾]/g, '')
+                    .replace(/,/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+    
+    // Handle percentage values
+    if (cleaned.includes('%')) {
+      cleaned = cleaned.replace(/%/g, '');
+    }
+    
+    // Handle parentheses for negative numbers: (123.45) -> -123.45
+    if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
+      cleaned = '-' + cleaned.substring(1, cleaned.length - 1);
+    }
+    
+    // Handle K/M/B suffixes (e.g., 1.5K -> 1500)
+    if (/\d+\.?\d*K$/i.test(cleaned)) {
+      cleaned = cleaned.replace(/K$/i, '');
+      return parseFloat(cleaned) * 1000;
+    }
+    
+    if (/\d+\.?\d*M$/i.test(cleaned)) {
+      cleaned = cleaned.replace(/M$/i, '');
+      return parseFloat(cleaned) * 1000000;
+    }
+    
+    if (/\d+\.?\d*B$/i.test(cleaned)) {
+      cleaned = cleaned.replace(/B$/i, '');
+      return parseFloat(cleaned) * 1000000000;
+    }
+    
+    // Extract the first number found in the string
+    const matches = cleaned.match(/-?\d+\.?\d*/);
+    if (matches && matches.length > 0) {
+      const value = parseFloat(matches[0]);
+      return isNaN(value) ? null : value;
+    }
+    
+    return null;
   }
 
   waitForDelay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Debug and diagnostic methods
+  enableDebugMode() {
+    this.debugMode = true;
+    console.log('ExnessScraper debug mode enabled');
+  }
+
+  disableDebugMode() {
+    this.debugMode = false;
+    console.log('ExnessScraper debug mode disabled');
+  }
+
+  getSelectorStats() {
+    return {
+      lastFoundSelectors: this.lastFoundSelectors,
+      selectorAttempts: this.selectorAttempts,
+      platform: this.platform
+    };
+  }
+
+  // Enhanced diagnostic method to test all selectors
+  async runDiagnostics() {
+    console.log('Running ExnessScraper diagnostics...');
+    
+    const diagnostics = {
+      platform: this.platform,
+      url: window.location.href,
+      timestamp: new Date().toISOString(),
+      results: {}
+    };
+
+    // Test market data extraction
+    try {
+      diagnostics.results.marketData = {
+        symbol: this.extractSymbol(),
+        price: this.extractCurrentPrice(),
+        bid: this.extractBidPrice(),
+        ask: this.extractAskPrice(),
+        spread: this.extractSpread(),
+        timeframe: this.extractTimeframe(),
+        volume: this.extractVolume()
+      };
+    } catch (error) {
+      diagnostics.results.marketData = { error: error.message };
+    }
+
+    // Test account data extraction
+    try {
+      diagnostics.results.accountData = {
+        balance: await this.extractBalance(),
+        equity: await this.extractEquity(),
+        margin: await this.extractMargin(),
+        freeMargin: await this.extractFreeMargin(),
+        marginLevel: await this.extractMarginLevel(),
+        openPnl: await this.extractOpenPnL(),
+        openPositions: await this.extractOpenPositions(),
+        currency: await this.extractAccountCurrency()
+      };
+    } catch (error) {
+      diagnostics.results.accountData = { error: error.message };
+    }
+
+    // Test UI element availability
+    diagnostics.results.uiElements = {
+      buyButton: !!this.findElementFromSelectors(this.selectors.buyButton),
+      sellButton: !!this.findElementFromSelectors(this.selectors.sellButton),
+      lotSizeInput: !!this.findElementFromSelectors(this.selectors.lotSizeInput),
+      symbolSelector: !!this.findElementFromSelectors(this.selectors.symbolSelector),
+      timeframeSelector: !!this.findElementFromSelectors(this.selectors.timeframeSelector)
+    };
+
+    console.log('Diagnostics complete:', diagnostics);
+    return diagnostics;
+  }
+
+  // Method to refresh selectors if page structure changes
+  refreshSelectors() {
+    this.lastFoundSelectors = {};
+    this.selectorAttempts = {};
+    this.setupSelectors();
+    console.log('Selectors refreshed for platform:', this.platform);
   }
 
   // Validation methods

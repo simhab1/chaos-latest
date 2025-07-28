@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ExnessScraper Test Page</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .price-display { font-size: 24px; color: #0066cc; }
+        .balance-amount { font-size: 18px; color: #009900; }
+        button { margin: 5px; padding: 10px; }
+        .results { background: #f5f5f5; padding: 10px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>ExnessScraper Test Page</h1>
+    
+    <!-- Mock trading interface elements -->
+    <div class="test-section">
+        <h2>Market Data</h2>
+        <div class="symbol-name">EURUSD</div>
+        <div class="price-display">1.08456</div>
+        <div class="bid-price">1.08454</div>
+        <div class="ask-price">1.08458</div>
+        <div class="spread">0.4</div>
+        <div class="timeframe-selector">
+            <span class="active">M15</span>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Account Data</h2>
+        <div class="account-balance">$10,000.00</div>
+        <div class="account-equity">$10,125.50</div>
+        <div class="used-margin">$500.00</div>
+        <div class="free-margin">$9,625.50</div>
+        <div class="open-pnl">+$125.50</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Trading Controls</h2>
+        <input type="number" class="lot-input" value="0.01" step="0.01">
+        <button class="buy-button">BUY</button>
+        <button class="sell-button">SELL</button>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test Controls</h2>
+        <button onclick="testScraper()">Test Enhanced Scraper</button>
+        <button onclick="runDiagnostics()">Run Diagnostics</button>
+        <button onclick="enableDebug()">Enable Debug Mode</button>
+        <div id="results" class="results"></div>
+    </div>
+
+    <script type="module">
+        import { ExnessScraper } from './exness-scraper.js';
+        
+        let scraper;
+        
+        window.testScraper = async function() {
+            try {
+                scraper = new ExnessScraper();
+                
+                const marketData = await scraper.scrapeMarketData();
+                const accountData = await scraper.scrapeAccountData();
+                
+                const results = {
+                    marketData,
+                    accountData,
+                    timestamp: new Date().toISOString()
+                };
+                
+                document.getElementById('results').innerHTML = 
+                    '<h3>Scraping Results:</h3><pre>' + 
+                    JSON.stringify(results, null, 2) + 
+                    '</pre>';
+                    
+                console.log('Test results:', results);
+            } catch (error) {
+                document.getElementById('results').innerHTML = 
+                    '<h3>Error:</h3><pre>' + error.message + '</pre>';
+                console.error('Test error:', error);
+            }
+        };
+        
+        window.runDiagnostics = async function() {
+            try {
+                if (!scraper) {
+                    scraper = new ExnessScraper();
+                }
+                
+                const diagnostics = await scraper.runDiagnostics();
+                
+                document.getElementById('results').innerHTML = 
+                    '<h3>Diagnostics Results:</h3><pre>' + 
+                    JSON.stringify(diagnostics, null, 2) + 
+                    '</pre>';
+                    
+                console.log('Diagnostics:', diagnostics);
+            } catch (error) {
+                document.getElementById('results').innerHTML = 
+                    '<h3>Diagnostics Error:</h3><pre>' + error.message + '</pre>';
+                console.error('Diagnostics error:', error);
+            }
+        };
+        
+        window.enableDebug = function() {
+            if (!scraper) {
+                scraper = new ExnessScraper();
+            }
+            scraper.enableDebugMode();
+            document.getElementById('results').innerHTML = 
+                '<h3>Debug mode enabled</h3>';
+        };
+    </script>
+</body>
+</html>

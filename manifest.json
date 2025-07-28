@@ -56,7 +56,11 @@
       ],
       "matches": [
         "https://*.exness.com/*",
-        "https://*.exness.global/*"
+        "https://*.exness.global/*",
+        "https://my.exness.com/*",
+        "https://trade.exness.com/*",
+        "https://my.exness.global/*",
+        "https://trade.exness.global/*"
       ]
     }
   ]

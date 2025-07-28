@@ -2,18 +2,48 @@
 (function() {
   'use strict';
   
+  // Import the enhanced ExnessScraper
+  let ExnessScraper;
+  
+  // Load the ExnessScraper module
+  const loadScraper = async () => {
+    try {
+      const module = await import(chrome.runtime.getURL('exness-scraper.js'));
+      ExnessScraper = module.ExnessScraper;
+      console.log('ExnessScraper module loaded successfully');
+    } catch (error) {
+      console.error('Failed to load ExnessScraper module:', error);
+      // Fallback to basic implementation if module loading fails
+      ExnessScraper = null;
+    }
+  };
+  
   class ExnessDataExtractor {
     constructor() {
       this.isActive = false;
       this.config = {};
       this.lastData = {};
       this.extractionInterval = null;
+      this.scraper = null;
+      this.retryCount = 0;
+      this.maxRetries = 3;
       
       this.init();
     }
 
-    init() {
+    async init() {
       console.log('Exness Data Extractor initialized');
+      
+      // Load the enhanced scraper
+      await loadScraper();
+      
+      if (ExnessScraper) {
+        this.scraper = new ExnessScraper();
+        console.log('Using enhanced ExnessScraper');
+      } else {
+        console.warn('Falling back to basic extraction methods');
+      }
+      
       this.setupMessageHandler();
       this.detectPlatformType();
       this.startDataExtraction();
@@ -110,25 +140,55 @@
       }
     }
 
-    extractAndSendData() {
+    async extractAndSendData() {
       try {
-        const marketData = this.extractMarketData();
-        const accountData = this.extractAccountData();
+        let marketData, accountData;
+        
+        if (this.scraper) {
+          // Use enhanced scraper if available
+          marketData = await this.scraper.scrapeMarketData();
+          accountData = await this.scraper.scrapeAccountData();
+        } else {
+          // Fallback to basic extraction
+          marketData = this.extractMarketData();
+          accountData = this.extractAccountData();
+        }
         
         const combinedData = {
           market: marketData,
           account: accountData,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          source: this.scraper ? 'enhanced' : 'basic'
         };
         
         // Only send if data has changed significantly
         if (this.hasDataChanged(combinedData)) {
           this.sendDataToContentScript('EXNESS_DATA_UPDATE', combinedData);
           this.lastData = combinedData;
+          
+          // Reset retry count on successful extraction
+          this.retryCount = 0;
         }
         
       } catch (error) {
         console.error('Data extraction error:', error);
+        
+        // Implement retry logic
+        this.retryCount++;
+        if (this.retryCount <= this.maxRetries) {
+          console.log(`Retrying data extraction (${this.retryCount}/${this.maxRetries})`);
+          
+          // Try to refresh scraper on failure
+          if (this.scraper && this.retryCount === 2) {
+            this.scraper.refreshSelectors();
+          }
+          
+          // Retry after a delay
+          setTimeout(() => this.extractAndSendData(), 1000 * this.retryCount);
+        } else {
+          console.error('Data extraction failed after all retries');
+          this.retryCount = 0; // Reset for next cycle
+        }
       }
     }
 
@@ -421,14 +481,24 @@
       try {
         console.log('Executing trade:', signal);
         
-        // Set lot size
-        await this.setLotSize(signal.lotSize || 0.01);
-        
-        // Execute buy or sell
-        if (signal.action === 'BUY') {
-          await this.clickBuyButton();
-        } else if (signal.action === 'SELL') {
-          await this.clickSellButton();
+        if (this.scraper) {
+          // Use enhanced scraper for trading
+          await this.scraper.setLotSize(signal.lotSize || 0.01);
+          
+          if (signal.action === 'BUY') {
+            await this.scraper.clickBuyButton();
+          } else if (signal.action === 'SELL') {
+            await this.scraper.clickSellButton();
+          }
+        } else {
+          // Fallback to basic methods
+          await this.setLotSize(signal.lotSize || 0.01);
+          
+          if (signal.action === 'BUY') {
+            await this.clickBuyButton();
+          } else if (signal.action === 'SELL') {
+            await this.clickSellButton();
+          }
         }
         
         // Wait for execution
@@ -438,7 +508,8 @@
         this.sendDataToContentScript('TRADE_RESULT', {
           success: true,
           signal,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          source: this.scraper ? 'enhanced' : 'basic'
         });
         
       } catch (error) {
@@ -447,7 +518,8 @@
           success: false,
           error: error.message,
           signal,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          source: this.scraper ? 'enhanced' : 'basic'
         });
       }
     }
