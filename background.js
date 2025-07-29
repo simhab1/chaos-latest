@@ -6,6 +6,7 @@ import { TradingEngine } from './trading-engine.js';
 class ChaosTraderXBackground {
   constructor() {
     this.isActive = false;
+    this.startTime = Date.now();
     this.config = {
       autoTrading: false,
       confidenceThreshold: 98,
@@ -26,6 +27,12 @@ class ChaosTraderXBackground {
     this.analysisData = {};
     this.trades = [];
     this.logs = [];
+    this.pendingTrades = [];
+    
+    // Initialize intervals
+    this.healthCheckInterval = null;
+    this.dataFlowInterval = null;
+    this.analysisInterval = null;
     
     this.init();
   }
@@ -320,6 +327,119 @@ class ChaosTraderXBackground {
     }
   }
 
+  // Add missing robust methods
+  async updateConfigRobust(data) {
+    try {
+      // Validate configuration first
+      const validation = await this.validateConfiguration(data);
+      if (!validation.isValid) {
+        return { success: false, message: `Configuration validation failed: ${validation.errors.join(', ')}` };
+      }
+
+      await this.updateConfig(data);
+      return { success: true, message: 'Configuration updated successfully' };
+    } catch (error) {
+      console.error('Error updating config:', error);
+      return { success: false, message: `Failed to update configuration: ${error.message}` };
+    }
+  }
+
+  async getStatusRobust() {
+    try {
+      const status = this.getStatus();
+      return { success: true, data: status };
+    } catch (error) {
+      console.error('Error getting status:', error);
+      return { success: false, message: `Failed to get status: ${error.message}` };
+    }
+  }
+
+  async getAnalysisRobust() {
+    try {
+      return { 
+        success: true, 
+        data: {
+          analysisData: this.analysisData,
+          marketData: this.marketData,
+          trades: this.trades,
+          logs: this.logs
+        }
+      };
+    } catch (error) {
+      console.error('Error getting analysis:', error);
+      return { success: false, message: `Failed to get analysis: ${error.message}` };
+    }
+  }
+
+  async switchSymbolRobust(symbol) {
+    try {
+      await this.switchSymbol(symbol);
+      return { success: true, message: `Symbol switched to ${symbol}` };
+    } catch (error) {
+      console.error('Error switching symbol:', error);
+      return { success: false, message: `Failed to switch symbol: ${error.message}` };
+    }
+  }
+
+  async switchTimeframeRobust(timeframe) {
+    try {
+      await this.switchTimeframe(timeframe);
+      return { success: true, message: `Timeframe switched to ${timeframe}` };
+    } catch (error) {
+      console.error('Error switching timeframe:', error);
+      return { success: false, message: `Failed to switch timeframe: ${error.message}` };
+    }
+  }
+
+  async handleMarketDataUpdateRobust(data) {
+    try {
+      this.handleMarketDataUpdate(data);
+      return { success: true };
+    } catch (error) {
+      console.error('Error handling market data update:', error);
+      return { success: false, message: `Failed to handle market data update: ${error.message}` };
+    }
+  }
+
+  async handleAccountDataUpdateRobust(data) {
+    try {
+      this.handleAccountDataUpdate(data);
+      return { success: true };
+    } catch (error) {
+      console.error('Error handling account data update:', error);
+      return { success: false, message: `Failed to handle account data update: ${error.message}` };
+    }
+  }
+
+  async resetSystemRobust() {
+    try {
+      // Stop trading first
+      this.isActive = false;
+      
+      // Clear all intervals
+      this.stopAllIntervals();
+      
+      // Reset data
+      this.marketData = {};
+      this.accountData = {};
+      this.analysisData = {};
+      this.trades = [];
+      this.logs = [];
+      
+      // Clear storage
+      await chrome.storage.local.clear();
+      
+      // Reinitialize
+      await this.loadStoredConfig();
+      this.startAnalysisLoop();
+      
+      return { success: true, message: 'System reset successfully' };
+    } catch (error) {
+      console.error('Error resetting system:', error);
+      return { success: false, message: `Failed to reset system: ${error.message}` };
+    }
+  }
+
   async injectAdvancedScripts(tabId) {
     try {
       await chrome.scripting.executeScript({
@@ -334,8 +454,13 @@ class ChaosTraderXBackground {
   }
 
   startAnalysisLoop() {
+    // Clear existing interval if any
+    if (this.analysisInterval) {
+      clearInterval(this.analysisInterval);
+    }
+    
     // Run analysis every 2 seconds
-    setInterval(() => {
+    this.analysisInterval = setInterval(() => {
       if (this.isActive && this.marketData.candles) {
         this.performAnalysis();
       }
@@ -747,6 +872,359 @@ class ChaosTraderXBackground {
     // Keep only last 1000 logs
     if (this.logs.length > 1000) {
       this.logs = this.logs.slice(-1000);
+    }
+  }
+
+  // Add missing utility methods
+  stopAllIntervals() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+    if (this.dataFlowInterval) {
+      clearInterval(this.dataFlowInterval);
+      this.dataFlowInterval = null;
+    }
+    if (this.analysisInterval) {
+      clearInterval(this.analysisInterval);
+      this.analysisInterval = null;
+    }
+  }
+
+  async closeAllPositionsGracefully() {
+    try {
+      const tabs = await chrome.tabs.query({ url: ['*://*.exness.com/*', '*://*.exness.global/*'] });
+      for (const tab of tabs) {
+        try {
+          if (tab.id && tab.status === 'complete') {
+            await chrome.tabs.sendMessage(tab.id, {
+              action: 'CLOSE_ALL_POSITIONS'
+            });
+          }
+        } catch (error) {
+          console.warn('Could not close positions on tab:', tab.id);
+        }
+      }
+    } catch (error) {
+      console.error('Error closing positions gracefully:', error);
+    }
+  }
+
+  async closeAllPositionsEmergency() {
+    try {
+      const tabs = await chrome.tabs.query({ url: ['*://*.exness.com/*', '*://*.exness.global/*'] });
+      for (const tab of tabs) {
+        try {
+          if (tab.id && tab.status === 'complete') {
+            await chrome.tabs.sendMessage(tab.id, {
+              action: 'EMERGENCY_CLOSE_POSITIONS'
+            });
+          }
+        } catch (error) {
+          console.warn('Could not emergency close positions on tab:', tab.id);
+        }
+      }
+    } catch (error) {
+      console.error('Error during emergency position close:', error);
+    }
+  }
+
+  clearPendingTrades() {
+    // Clear any pending trade orders
+    this.pendingTrades = [];
+  }
+
+  async logEmergencyStop() {
+    try {
+      const emergencyLog = {
+        timestamp: Date.now(),
+        action: 'EMERGENCY_STOP',
+        reason: 'User initiated emergency stop',
+        systemState: {
+          isActive: this.isActive,
+          openTrades: this.trades.filter(t => t.status === 'open').length,
+          accountData: this.accountData
+        }
+      };
+      
+      this.addLog('EMERGENCY STOP EXECUTED', 'error');
+      await chrome.storage.local.set({ 'emergencyLog': emergencyLog });
+    } catch (error) {
+      console.error('Error logging emergency stop:', error);
+    }
+  }
+
+  checkDataFlowStatus() {
+    try {
+      const now = Date.now();
+      const dataAge = now - (this.marketData.timestamp || 0);
+      
+      if (dataAge > 60000) { // Data older than 1 minute
+        console.warn('Data flow issue detected - stale market data');
+        this.addLog('Data flow warning: Market data is stale', 'warning');
+      }
+      
+      const accountAge = now - (this.accountData.timestamp || 0);
+      if (accountAge > 120000) { // Account data older than 2 minutes
+        console.warn('Data flow issue detected - stale account data');
+        this.addLog('Data flow warning: Account data is stale', 'warning');
+      }
+    } catch (error) {
+      console.error('Error checking data flow status:', error);
+    }
+  }
+
+  async checkEngineHealth() {
+    const engines = {};
+    
+    try {
+      engines.albrooks = this.albrooksAnalyzer ? 'healthy' : 'unhealthy';
+      engines.volume = this.volumeAnalyzer ? 'healthy' : 'unhealthy';
+      engines.sentiment = this.sentimentAnalyzer ? 'healthy' : 'unhealthy';
+      engines.trading = this.tradingEngine ? 'healthy' : 'unhealthy';
+    } catch (error) {
+      engines.error = error.message;
+    }
+    
+    return engines;
+  }
+
+  async checkDataFlow() {
+    const dataFlow = {};
+    
+    try {
+      const now = Date.now();
+      dataFlow.marketData = {
+        lastUpdate: this.marketData.timestamp || 0,
+        age: now - (this.marketData.timestamp || 0),
+        status: (now - (this.marketData.timestamp || 0)) < 60000 ? 'healthy' : 'stale'
+      };
+      
+      dataFlow.accountData = {
+        lastUpdate: this.accountData.timestamp || 0,
+        age: now - (this.accountData.timestamp || 0),
+        status: (now - (this.accountData.timestamp || 0)) < 120000 ? 'healthy' : 'stale'
+      };
+    } catch (error) {
+      dataFlow.error = error.message;
+    }
+    
+    return dataFlow;
+  }
+
+  async checkTradingHealth() {
+    const trading = {};
+    
+    try {
+      trading.isActive = this.isActive;
+      trading.openTrades = this.trades.filter(t => t.status === 'open').length;
+      trading.totalTrades = this.trades.length;
+      trading.lastTradeTime = this.trades.length > 0 ? this.trades[this.trades.length - 1].timestamp : null;
+      trading.status = this.isActive ? 'active' : 'inactive';
+    } catch (error) {
+      trading.error = error.message;
+      trading.status = 'unhealthy';
+    }
+    
+    return trading;
+  }
+
+  collectHealthIssues(components) {
+    const issues = [];
+    
+    try {
+      if (components.engines) {
+        Object.entries(components.engines).forEach(([engine, status]) => {
+          if (status !== 'healthy') {
+            issues.push(`Engine ${engine} is ${status}`);
+          }
+        });
+      }
+      
+      if (components.dataFlow) {
+        if (components.dataFlow.marketData?.status === 'stale') {
+          issues.push('Market data flow is stale');
+        }
+        if (components.dataFlow.accountData?.status === 'stale') {
+          issues.push('Account data flow is stale');
+        }
+      }
+      
+      if (components.trading?.status === 'unhealthy') {
+        issues.push('Trading system is unhealthy');
+      }
+    } catch (error) {
+      issues.push(`Health check error: ${error.message}`);
+    }
+    
+    return issues;
+  }
+
+  getMemoryUsage() {
+    try {
+      // Estimate memory usage
+      const objectSizes = {
+        marketData: JSON.stringify(this.marketData).length,
+        accountData: JSON.stringify(this.accountData).length,
+        analysisData: JSON.stringify(this.analysisData).length,
+        trades: JSON.stringify(this.trades).length,
+        logs: JSON.stringify(this.logs).length
+      };
+      
+      return objectSizes;
+    } catch (error) {
+      return { error: error.message };
+    }
+  }
+
+  async recoverStartTrading(error) {
+    console.log('Recovering from start trading error:', error.message);
+    
+    try {
+      // Try to reinitialize engines
+      await this.initializeAnalysisEngines();
+      
+      // Reload configuration
+      await this.loadStoredConfig();
+      
+      console.log('Start trading recovery completed');
+    } catch (recoveryError) {
+      console.error('Start trading recovery failed:', recoveryError);
+    }
+  }
+
+  async recoverAnalysisError(error) {
+    console.log('Recovering from analysis error:', error.message);
+    
+    try {
+      // Reinitialize analysis engines
+      this.albrooksAnalyzer = new AlBrooksAnalysis();
+      this.volumeAnalyzer = new VolumeAnalysis();
+      this.sentimentAnalyzer = new SentimentAnalysis();
+      
+      console.log('Analysis error recovery completed');
+    } catch (recoveryError) {
+      console.error('Analysis error recovery failed:', recoveryError);
+    }
+  }
+
+  async recoverDataExtractionError(error) {
+    console.log('Recovering from data extraction error:', error.message);
+    
+    try {
+      // Clear stale data
+      this.marketData = {};
+      this.accountData = {};
+      
+      // Try to reinject scripts
+      const tabs = await chrome.tabs.query({ url: ['*://*.exness.com/*', '*://*.exness.global/*'] });
+      for (const tab of tabs) {
+        if (tab.id && tab.status === 'complete') {
+          await this.injectAdvancedScripts(tab.id);
+        }
+      }
+      
+      console.log('Data extraction error recovery completed');
+    } catch (recoveryError) {
+      console.error('Data extraction error recovery failed:', recoveryError);
+    }
+  }
+
+  async recoverTradeExecutionError(error) {
+    console.log('Recovering from trade execution error:', error.message);
+    
+    try {
+      // Stop trading temporarily
+      const wasActive = this.isActive;
+      this.isActive = false;
+      
+      // Wait a bit
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // Try to refresh connection to trading platform
+      const tabs = await chrome.tabs.query({ url: ['*://*.exness.com/*', '*://*.exness.global/*'] });
+      for (const tab of tabs) {
+        if (tab.id && tab.status === 'complete') {
+          await chrome.tabs.reload(tab.id);
+        }
+      }
+      
+      // Restore trading state if it was active
+      if (wasActive) {
+        setTimeout(() => {
+          this.isActive = true;
+        }, 10000);
+      }
+      
+      console.log('Trade execution error recovery completed');
+    } catch (recoveryError) {
+      console.error('Trade execution error recovery failed:', recoveryError);
+    }
+  }
+
+  async performGeneralRecovery(error) {
+    console.log('Performing general recovery for error:', error.message);
+    
+    try {
+      // Save current state
+      await this.saveState();
+      
+      // Clear intervals and restart
+      this.stopAllIntervals();
+      this.startSystemMonitoring();
+      
+      console.log('General recovery completed');
+    } catch (recoveryError) {
+      console.error('General recovery failed:', recoveryError);
+    }
+  }
+
+  async recoverDataFlow() {
+    console.log('Recovering data flow...');
+    
+    try {
+      // Clear stale data
+      this.marketData = {};
+      this.accountData = {};
+      
+      // Try to reconnect to data sources
+      const tabs = await chrome.tabs.query({ url: ['*://*.exness.com/*', '*://*.exness.global/*'] });
+      for (const tab of tabs) {
+        if (tab.id && tab.status === 'complete') {
+          await chrome.tabs.sendMessage(tab.id, {
+            action: 'RESTART_DATA_EXTRACTION'
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Data flow recovery failed:', error);
+    }
+  }
+
+  async restartFailedEngines() {
+    console.log('Restarting failed engines...');
+    
+    try {
+      await this.initializeAnalysisEngines();
+    } catch (error) {
+      console.error('Engine restart failed:', error);
+    }
+  }
+
+  async cleanupMemory() {
+    console.log('Cleaning up memory...');
+    
+    try {
+      // Keep only recent trades and logs
+      this.trades = this.trades.slice(-50);
+      this.logs = this.logs.slice(-100);
+      
+      // Clear old analysis data
+      if (this.analysisData.timestamp && Date.now() - this.analysisData.timestamp > 300000) {
+        this.analysisData = {};
+      }
+    } catch (error) {
+      console.error('Memory cleanup failed:', error);
     }
   }
 }
