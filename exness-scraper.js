@@ -5,6 +5,8 @@ export class ExnessScraper {
     this.isInitialized = false;
     this.retryCount = 0;
     this.maxRetries = 5;
+    this.dynamicSelectors = new Map(); // Cache for discovered selectors
+    this.selectorAttempts = new Map(); // Track failed selectors
     
     this.init();
   }
@@ -12,199 +14,233 @@ export class ExnessScraper {
   init() {
     this.detectPlatform();
     this.setupSelectors();
+    this.discoverDynamicSelectors();
     this.isInitialized = true;
     console.log('ExnessScraper initialized for platform:', this.platform);
   }
 
   detectPlatform() {
-    // Detect Exness platform type based on DOM elements and URL
+    // Enhanced platform detection with multiple checks
     const url = window.location.href;
+    const domain = window.location.hostname;
     
-    if (url.includes('my.exness.global/webtrading')) {
+    // Check URL patterns first
+    if (url.includes('my.exness.global/webtrading') || url.includes('trade.exness.global')) {
       this.platform = 'ExnessGlobalWeb';
-    } else if (document.querySelector('.mt4-terminal') || document.querySelector('[class*="mt4"]')) {
-      this.platform = 'MT4';
-    } else if (document.querySelector('.mt5-terminal') || document.querySelector('[class*="mt5"]')) {
-      this.platform = 'MT5';
-    } else if (document.querySelector('.web-terminal') || document.querySelector('[id*="terminal"]')) {
-      this.platform = 'WebTerminal';
-    } else if (document.querySelector('.trading-view') || document.querySelector('[class*="tradingview"]')) {
-      this.platform = 'TradingView';
+    } else if (url.includes('my.exness.com/webtrading') || url.includes('trade.exness.com')) {
+      this.platform = 'ExnessWeb';
+    } else if (domain.includes('exness')) {
+      // Check for specific platform indicators in DOM
+      if (this.waitForElement('.mt4-terminal, [class*="mt4"], [id*="mt4"]', 1000)) {
+        this.platform = 'MT4';
+      } else if (this.waitForElement('.mt5-terminal, [class*="mt5"], [id*="mt5"]', 1000)) {
+        this.platform = 'MT5';
+      } else if (this.waitForElement('.web-terminal, [id*="terminal"], [class*="trading"]', 1000)) {
+        this.platform = 'WebTerminal';
+      } else {
+        this.platform = 'ExnessGeneric';
+      }
     } else {
-      this.platform = 'Exness';
+      this.platform = 'Unknown';
     }
+    
+    console.log(`Platform detected: ${this.platform} on ${domain}`);
   }
 
   setupSelectors() {
-    // Define selectors based on actual Exness platform structure
-    // Enhanced for Exness Global WebTrading platform
+    // Enhanced selectors with more comprehensive fallbacks
     this.selectors = {
-      // Price and symbol selectors - Updated for Exness Global
+      // Price selectors - Enhanced with data attributes and modern selectors
       currentPrice: [
-        '.price-display',
-        '.current-price',
-        '.quote-price',
-        '.last-price',
-        '[class*="price"]:not([class*="change"])',
-        '.symbol-price',
-        '.bid-price',
-        '.ask-price',
-        // Exness Global specific selectors
-        '[data-testid="price"]',
-        '[class*="Price"]',
-        '.trading-panel .price',
-        '.instrument-price',
-        '.quote-container .price'
+        // Exness Global specific
+        '[data-testid="price"], [data-test="price"], [data-qa="price"]',
+        '[class*="Price"]:not([class*="Change"])',
+        '[class*="quote"] [class*="price"]',
+        '.trading-panel [class*="price"]',
+        '.instrument-price, .symbol-price',
+        
+        // Generic fallbacks
+        '.price-display, .current-price, .quote-price, .last-price',
+        '.bid-price, .ask-price',
+        '[class*="price"]:not([class*="change"]):not([class*="diff"])',
+        
+        // Dynamic discovery
+        'span:contains("$"), span:contains("€"), span:contains("£")',
+        '[class*="rate"], [class*="quote"]',
+        '.trading-info .value, .market-data .value'
       ],
       
       symbol: [
-        '.symbol-name',
-        '.current-symbol',
-        '.instrument-name',
-        '.trading-pair',
-        '.symbol-display',
-        '[class*="symbol"]:not([class*="price"])',
-        '.pair-name',
-        // Exness Global specific selectors
-        '[data-testid="symbol"]',
-        '[class*="Symbol"]',
-        '.trading-panel .symbol',
-        '.instrument-selector .selected',
-        '.active-instrument'
+        // Enhanced symbol detection
+        '[data-testid="symbol"], [data-test="symbol"], [data-qa="symbol"]',
+        '[data-testid="instrument"], [data-test="instrument"]',
+        '.instrument-selector .selected, .symbol-selector .selected',
+        '.active-instrument, .current-symbol, .selected-symbol',
+        '[class*="Symbol"]:not([class*="Price"])',
+        '.trading-panel [class*="symbol"], .trading-panel [class*="instrument"]',
+        
+        // Generic fallbacks  
+        '.symbol-name, .instrument-name, .trading-pair, .pair-name',
+        '.symbol-display, [class*="symbol"]:not([class*="price"])',
+        '.chart-header .symbol, .trading-header .symbol'
       ],
       
-      // Account information selectors - Enhanced for Exness Global
+      // Account selectors with enhanced detection
       balance: [
-        '.account-balance',
-        '.balance-amount',
-        '.acc-balance',
-        '[class*="balance"]',
-        '.wallet-balance',
-        '.account-info .balance',
-        // Exness Global specific selectors
-        '[data-testid="balance"]',
-        '[class*="Balance"]',
-        '.account-panel .balance',
-        '.trading-account .balance',
-        '.portfolio-balance'
+        '[data-testid="balance"], [data-test="balance"], [data-qa="balance"]',
+        '[data-testid="account-balance"], [data-test="account-balance"]',
+        '.account-balance, .balance-amount, .acc-balance',
+        '.wallet-balance, .portfolio-balance',
+        '[class*="Balance"]:not([class*="Change"])',
+        '.account-panel [class*="balance"], .trading-account [class*="balance"]',
+        '.account-info .balance, .user-info .balance',
+        '.balance-value, .balance-display'
       ],
       
       equity: [
-        '.account-equity',
-        '.equity-amount',
-        '.acc-equity',
-        '[class*="equity"]',
-        '.account-info .equity'
+        '[data-testid="equity"], [data-test="equity"], [data-qa="equity"]',
+        '.account-equity, .equity-amount, .acc-equity',
+        '[class*="Equity"], [class*="equity"]',
+        '.account-info .equity, .portfolio-equity'
       ],
       
       margin: [
-        '.used-margin',
-        '.margin-used',
-        '.acc-margin',
-        '[class*="margin"]:not([class*="free"])',
-        '.account-info .margin'
+        '[data-testid="margin"], [data-test="margin"], [data-qa="margin"]',
+        '.account-margin, .margin-amount, .acc-margin',
+        '[class*="Margin"], [class*="margin"]',
+        '.account-info .margin, .trading-info .margin'
       ],
       
-      freeMargin: [
-        '.free-margin',
-        '.margin-free',
-        '.available-margin',
-        '[class*="free-margin"]',
-        '.account-info .free-margin'
-      ],
-      
-      // Trading button selectors - Enhanced for Exness Global
+      // Trading interface selectors
       buyButton: [
-        '.buy-button',
-        '.btn-buy',
-        '.order-buy',
-        'button[class*="buy"]',
-        '.trade-button.buy',
-        '.trading-buttons .buy',
-        '[data-action="buy"]',
-        // Exness Global specific selectors
-        '[data-testid="buy-button"]',
-        '[class*="BuyButton"]',
-        '.trading-panel .buy',
-        'button[class*="Buy"]',
-        '.order-buttons .buy'
+        '[data-testid="buy-button"], [data-test="buy-button"]',
+        '.buy-button, .btn-buy, .order-buy',
+        'button[class*="buy"]:not([disabled])',
+        '.trade-button.buy, .trading-button.buy',
+        'button:contains("Buy"), button:contains("BUY")',
+        '.order-panel .buy, .trading-panel .buy'
       ],
       
       sellButton: [
-        '.sell-button',
-        '.btn-sell',
-        '.order-sell',
-        'button[class*="sell"]',
-        '.trade-button.sell',
-        '.trading-buttons .sell',
-        '[data-action="sell"]',
-        // Exness Global specific selectors
-        '[data-testid="sell-button"]',
-        '[class*="SellButton"]',
-        '.trading-panel .sell',
-        'button[class*="Sell"]',
-        '.order-buttons .sell'
+        '[data-testid="sell-button"], [data-test="sell-button"]',
+        '.sell-button, .btn-sell, .order-sell',
+        'button[class*="sell"]:not([disabled])',
+        '.trade-button.sell, .trading-button.sell',
+        'button:contains("Sell"), button:contains("SELL")',
+        '.order-panel .sell, .trading-panel .sell'
       ],
       
-      // Lot size input selectors
       lotSizeInput: [
-        'input[class*="lot"]',
-        'input[class*="volume"]',
-        'input[class*="size"]',
-        '.lot-input input',
-        '.volume-input input',
-        '.size-input input',
-        'input[name*="lot"]',
-        'input[name*="volume"]'
-      ],
-      
-      // Position and trade selectors
-      positionsTable: [
-        '.positions-table',
-        '.open-positions',
-        '.trades-table',
-        '[class*="position"]:has(table)',
-        '.account-positions',
-        '.trading-positions'
-      ],
-      
-      positionRows: [
-        '.position-row',
-        '.trade-row',
-        'tr[class*="position"]',
-        'tr[class*="trade"]',
-        '.positions-table tr:not(.header)'
-      ],
-      
-      // Symbol selector
-      symbolSelector: [
-        '.symbol-selector',
-        '.instrument-selector',
-        '.pair-selector',
-        '[class*="symbol"] select',
-        '.trading-pair-selector',
-        '.market-selector'
-      ],
-      
-      // Timeframe selector
-      timeframeSelector: [
-        '.timeframe-selector',
-        '.period-selector',
-        '.tf-selector',
-        '[class*="timeframe"]',
-        '.chart-timeframe'
-      ],
-      
-      // Chart container
-      chartContainer: [
-        '.chart-container',
-        '.trading-chart',
-        '.price-chart',
-        '#chart',
-        '.chart-widget',
-        '[class*="chart"]:has(canvas)'
+        '[data-testid="lot-size"], [data-test="lot-size"], [data-qa="volume"]',
+        'input[class*="lot"], input[class*="volume"], input[class*="size"]',
+        '.lot-input input, .volume-input input, .size-input input',
+        '.order-panel input[type="number"], .trading-panel input[type="number"]',
+        'input[placeholder*="lot"], input[placeholder*="volume"]'
       ]
     };
+  }
+
+  async discoverDynamicSelectors() {
+    // Discover selectors by analyzing the DOM structure
+    try {
+      // Look for trading interface containers
+      const tradingContainers = document.querySelectorAll('[class*="trading"], [class*="order"], [class*="trade"]');
+      
+      for (const container of tradingContainers) {
+        // Discover price elements by looking for numeric content with currency patterns
+        const priceElements = container.querySelectorAll('*');
+        for (const element of priceElements) {
+          const text = element.textContent?.trim();
+          if (text && /^\d+[\.,]\d+$/.test(text) && parseFloat(text.replace(',', '.')) > 0) {
+            this.addDynamicSelector('discoveredPrice', this.getElementSelector(element));
+          }
+        }
+        
+        // Discover buttons by text content
+        const buttons = container.querySelectorAll('button, [role="button"]');
+        for (const button of buttons) {
+          const text = button.textContent?.toLowerCase().trim();
+          if (text?.includes('buy')) {
+            this.addDynamicSelector('discoveredBuy', this.getElementSelector(button));
+          } else if (text?.includes('sell')) {
+            this.addDynamicSelector('discoveredSell', this.getElementSelector(button));
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Dynamic selector discovery failed:', error);
+    }
+  }
+
+  addDynamicSelector(type, selector) {
+    if (!this.dynamicSelectors.has(type)) {
+      this.dynamicSelectors.set(type, []);
+    }
+    this.dynamicSelectors.get(type).push(selector);
+  }
+
+  getElementSelector(element) {
+    // Generate a CSS selector for an element
+    const path = [];
+    let current = element;
+    
+    while (current && current.nodeType === Node.ELEMENT_NODE) {
+      let selector = current.tagName.toLowerCase();
+      
+      if (current.id) {
+        selector += `#${current.id}`;
+        path.unshift(selector);
+        break;
+      }
+      
+      if (current.className) {
+        const classes = current.className.split(/\s+/).filter(c => c.length > 0);
+        if (classes.length > 0) {
+          selector += '.' + classes.slice(0, 2).join('.');
+        }
+      }
+      
+      // Add position if multiple similar elements
+      const siblings = Array.from(current.parentNode?.children || []);
+      const sameTag = siblings.filter(s => s.tagName === current.tagName);
+      if (sameTag.length > 1) {
+        const index = sameTag.indexOf(current) + 1;
+        selector += `:nth-of-type(${index})`;
+      }
+      
+      path.unshift(selector);
+      current = current.parentNode;
+    }
+    
+    return path.join(' > ');
+  }
+
+  async waitForElement(selector, timeout = 5000) {
+    return new Promise((resolve) => {
+      const element = document.querySelector(selector);
+      if (element) {
+        resolve(element);
+        return;
+      }
+      
+      const observer = new MutationObserver(() => {
+        const element = document.querySelector(selector);
+        if (element) {
+          observer.disconnect();
+          resolve(element);
+        }
+      });
+      
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+      
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(null);
+      }, timeout);
+    });
   }
 
   // Main scraping methods
@@ -258,8 +294,52 @@ export class ExnessScraper {
   }
 
   extractCurrentPrice() {
-    const priceText = this.extractTextFromSelectors(this.selectors.currentPrice);
-    return this.parseNumericValue(priceText) || 0;
+    // Try primary selectors first
+    let priceText = this.extractTextFromSelectors(this.selectors.currentPrice);
+    let price = this.parseNumericValue(priceText);
+    
+    if (price && price > 0) {
+      return price;
+    }
+
+    // Try dynamic selectors if available
+    const dynamicPriceSelectors = this.dynamicSelectors.get('discoveredPrice') || [];
+    for (const selector of dynamicPriceSelectors) {
+      try {
+        const element = document.querySelector(selector);
+        if (element) {
+          price = this.parseNumericValue(element.textContent);
+          if (price && price > 0) {
+            console.log(`Price found using dynamic selector: ${selector} = ${price}`);
+            return price;
+          }
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+
+    // Advanced fallback - pattern matching
+    const textContent = document.body.textContent || '';
+    const pricePatterns = [
+      /(\d{1,6}[\.,]\d{2,5})/g,  // Standard price pattern
+      /([£$€¥]?\s*\d+[\.,]\d{2,5})/g // Currency prefixed
+    ];
+
+    for (const pattern of pricePatterns) {
+      const matches = textContent.match(pattern);
+      if (matches) {
+        for (const match of matches) {
+          price = this.parseNumericValue(match);
+          if (price && price > 0.001 && price < 100000) {
+            console.log(`Price found via pattern matching: ${price}`);
+            return price;
+          }
+        }
+      }
+    }
+
+    return 0;
   }
 
   extractBidPrice() {

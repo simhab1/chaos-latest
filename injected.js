@@ -421,25 +421,29 @@
       try {
         console.log('Executing trade:', signal);
         
-        // Set lot size
-        await this.setLotSize(signal.lotSize || 0.01);
-        
-        // Execute buy or sell
-        if (signal.action === 'BUY') {
-          await this.clickBuyButton();
-        } else if (signal.action === 'SELL') {
-          await this.clickSellButton();
+        // Pre-execution validation
+        const validation = await this.validateTradeExecution();
+        if (!validation.canExecute) {
+          throw new Error(`Trade validation failed: ${validation.reason}`);
         }
+
+        // Enhanced trade execution with better security handling
+        const executionResult = await this.executeTradeSecurely(signal);
         
-        // Wait for execution
-        await this.waitForDelay(1000);
-        
-        // Send result back
-        this.sendDataToContentScript('TRADE_RESULT', {
-          success: true,
-          signal,
-          timestamp: Date.now()
-        });
+        if (executionResult.success) {
+          // Wait for confirmation
+          const confirmation = await this.waitForTradeConfirmation(3000);
+          
+          this.sendDataToContentScript('TRADE_RESULT', {
+            success: true,
+            signal,
+            confirmation,
+            timestamp: Date.now(),
+            executionMethod: executionResult.method
+          });
+        } else {
+          throw new Error(executionResult.error);
+        }
         
       } catch (error) {
         console.error('Trade execution error:', error);
@@ -447,9 +451,239 @@
           success: false,
           error: error.message,
           signal,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          suggestion: this.getExecutionSuggestion(error)
         });
       }
+    }
+
+    async validateTradeExecution() {
+      // Check if trading is possible
+      const tradingButtons = document.querySelectorAll('.buy-button, .sell-button, button[class*="buy"], button[class*="sell"]');
+      
+      if (tradingButtons.length === 0) {
+        return {
+          canExecute: false,
+          reason: 'No trading buttons found on page'
+        };
+      }
+
+      // Check if buttons are enabled
+      const enabledButtons = Array.from(tradingButtons).filter(btn => !btn.disabled);
+      if (enabledButtons.length === 0) {
+        return {
+          canExecute: false,
+          reason: 'All trading buttons are disabled'
+        };
+      }
+
+      // Check if we're on the correct page
+      if (!window.location.href.includes('exness')) {
+        return {
+          canExecute: false,
+          reason: 'Not on Exness platform'
+        };
+      }
+
+      return {
+        canExecute: true,
+        reason: 'Validation passed'
+      };
+    }
+
+    async executeTradeSecurely(signal) {
+      // Try multiple execution methods
+      const executionMethods = [
+        () => this.executeViaDirectClick(signal),
+        () => this.executeViaKeyboard(signal),
+        () => this.executeViaForm(signal)
+      ];
+
+      for (let i = 0; i < executionMethods.length; i++) {
+        try {
+          console.log(`Trying execution method ${i + 1}`);
+          const result = await executionMethods[i]();
+          if (result.success) {
+            return { success: true, method: i + 1, ...result };
+          }
+        } catch (error) {
+          console.warn(`Execution method ${i + 1} failed:`, error);
+          continue;
+        }
+      }
+
+      return {
+        success: false,
+        error: 'All execution methods failed'
+      };
+    }
+
+    async executeViaDirectClick(signal) {
+      // Set lot size first
+      await this.setLotSizeSecurely(signal.lotSize || 0.01);
+      
+      // Direct button click
+      if (signal.action === 'BUY') {
+        await this.clickBuyButtonSecurely();
+      } else if (signal.action === 'SELL') {
+        await this.clickSellButtonSecurely();
+      }
+      
+      return { success: true, method: 'direct_click' };
+    }
+
+    async executeViaKeyboard(signal) {
+      // Focus on trading interface and use keyboard shortcuts
+      const tradingInterface = document.querySelector('.trading-panel, .order-panel, [class*="trading"]');
+      if (tradingInterface) {
+        tradingInterface.focus();
+        
+        // Common trading shortcuts
+        if (signal.action === 'BUY') {
+          this.simulateKeyPress('F9'); // Common buy hotkey
+          this.simulateKeyPress('B');  // Alternative
+        } else if (signal.action === 'SELL') {
+          this.simulateKeyPress('F10'); // Common sell hotkey
+          this.simulateKeyPress('S');   // Alternative
+        }
+        
+        return { success: true, method: 'keyboard' };
+      }
+      
+      throw new Error('Trading interface not found for keyboard execution');
+    }
+
+    async executeViaForm(signal) {
+      // Look for order form elements
+      const orderForm = document.querySelector('form[class*="order"], form[class*="trade"]');
+      if (orderForm) {
+        // Fill form data
+        await this.fillOrderForm(signal, orderForm);
+        
+        // Submit form
+        const submitButton = orderForm.querySelector('button[type="submit"], input[type="submit"]');
+        if (submitButton) {
+          this.triggerEvent(submitButton, 'click');
+          return { success: true, method: 'form_submit' };
+        }
+      }
+      
+      throw new Error('Order form not found or incomplete');
+    }
+
+    async setLotSizeSecurely(size) {
+      const methods = [
+        () => this.setLotSizeViaInput(size),
+        () => this.setLotSizeViaSteppers(size),
+        () => this.setLotSizeViaSlider(size)
+      ];
+
+      for (const method of methods) {
+        try {
+          await method();
+          console.log(`Lot size set to ${size} successfully`);
+          return;
+        } catch (error) {
+          continue;
+        }
+      }
+
+      console.warn(`Failed to set lot size to ${size}`);
+    }
+
+    async setLotSizeViaInput(size) {
+      const lotInputSelectors = [
+        '[data-testid="lot-size"], [data-test="lot-size"]',
+        'input[class*="lot"], input[class*="volume"], input[class*="size"]',
+        '.lot-input input, .volume-input input, .size-input input'
+      ];
+      
+      for (const selector of lotInputSelectors) {
+        const input = document.querySelector(selector);
+        if (input && !input.disabled) {
+          // Clear and set value
+          input.value = '';
+          input.value = size.toFixed(2);
+          
+          // Trigger events
+          this.triggerEvent(input, 'focus');
+          this.triggerEvent(input, 'input');
+          this.triggerEvent(input, 'change');
+          this.triggerEvent(input, 'blur');
+          
+          return;
+        }
+      }
+      
+      throw new Error('Lot size input not found');
+    }
+
+    async waitForTradeConfirmation(timeout = 3000) {
+      return new Promise((resolve) => {
+        const startTime = Date.now();
+        
+        const checkForConfirmation = () => {
+          // Look for confirmation elements
+          const confirmationSelectors = [
+            '.trade-confirmation, .order-confirmation',
+            '.success-message, .trade-success',
+            '[class*="confirm"], [class*="success"]'
+          ];
+          
+          for (const selector of confirmationSelectors) {
+            const element = document.querySelector(selector);
+            if (element && element.textContent?.toLowerCase().includes('success')) {
+              resolve({
+                confirmed: true,
+                message: element.textContent,
+                time: Date.now() - startTime
+              });
+              return;
+            }
+          }
+          
+          if (Date.now() - startTime > timeout) {
+            resolve({
+              confirmed: false,
+              message: 'Timeout waiting for confirmation',
+              time: timeout
+            });
+            return;
+          }
+          
+          setTimeout(checkForConfirmation, 100);
+        };
+        
+        checkForConfirmation();
+      });
+    }
+
+    getExecutionSuggestion(error) {
+      const errorMessage = error.message.toLowerCase();
+      
+      if (errorMessage.includes('button') || errorMessage.includes('click')) {
+        return 'Try executing the trade manually to verify the trading interface is working';
+      } else if (errorMessage.includes('disabled')) {
+        return 'Check if trading is enabled and account has sufficient funds';
+      } else if (errorMessage.includes('validation')) {
+        return 'Verify you are on the correct Exness trading page';
+      } else {
+        return 'Check browser console for detailed error information';
+      }
+    }
+
+    triggerEvent(element, eventType) {
+      const event = new Event(eventType, { bubbles: true, cancelable: true });
+      element.dispatchEvent(event);
+    }
+
+    simulateKeyPress(key) {
+      const event = new KeyboardEvent('keydown', {
+        key: key,
+        bubbles: true,
+        cancelable: true
+      });
+      document.dispatchEvent(event);
     }
 
     async setLotSize(size) {

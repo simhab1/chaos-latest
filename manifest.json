@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChaosTraderX - Exness Trading Automation",
-  "version": "1.0.0",
-  "description": "AI-powered trading automation for Exness using Al Brooks methodology",
+  "version": "1.1.0",
+  "description": "AI-powered trading automation for Exness using Al Brooks methodology with enhanced error handling",
   "permissions": [
     "activeTab",
     "storage",
@@ -10,14 +10,27 @@
     "background",
     "alarms",
     "notifications",
-    "tabs"
+    "tabs",
+    "webRequest",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://*.exness.com/*",
     "https://my.exness.com/*",
     "https://trade.exness.com/*",
     "https://*.exness.global/*",
-    "https://my.exness.global/*"
+    "https://my.exness.global/*",
+    "https://trade.exness.global/*",
+    "https://newsapi.org/*",
+    "https://www.alphavantage.co/*",
+    "https://api.polygon.io/*",
+    "https://api.rss2json.com/*",
+    "https://feeds.finance.yahoo.com/*",
+    "https://www.fxstreet.com/*",
+    "https://www.forexfactory.com/*",
+    "https://finance.yahoo.com/*",
+    "https://www.investing.com/*",
+    "https://www.marketwatch.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -59,5 +72,14 @@
         "https://*.exness.global/*"
       ]
     }
-  ]
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "api_rules",
+        "enabled": true,
+        "path": "api_rules.json"
+      }
+    ]
+  }
 }
